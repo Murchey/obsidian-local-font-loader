@@ -7,6 +7,7 @@ import type { MathJaxFontData } from './obsidian-extras';
 import { t } from './i18n';
 import { parseFontMetadata } from './font-metadata';
 import { DEFAULT_SETTINGS } from './constants';
+import { bindDeviceToPreset, inheritSimilarDevicePresets } from './device-presets';
 import {
     planDeviceRepair,
     remapDeviceIds,
@@ -944,24 +945,8 @@ export default class LocalFontLoaderPlugin extends Plugin {
      * @param {string} targetPresetId - The target preset ID
      */
     async assignDeviceToPreset(deviceId: string, targetPresetId: string) {
-        // Remove the device from all presets
-        this.settings.presets.forEach(preset => {
-            preset.targetDevices = preset.targetDevices.filter(id => id !== deviceId);
-        });
-
-        // Add to the target preset (unless the target is the global preset)
-        const targetPreset = this.settings.presets.find(p => p.id === targetPresetId);
-
-        // Key logic:
-        // - If the target preset is the global preset (id === 'default-preset' && targetDevices.length === 0), do not add the device
-        // - Otherwise, add the device to the target preset
-        if (targetPreset) {
-            const isGlobalPreset = targetPreset.id === 'default-preset' && targetPreset.targetDevices.length === 0;
-            if (!isGlobalPreset && !targetPreset.targetDevices.includes(deviceId)) {
-                targetPreset.targetDevices.push(deviceId);
-            }
-        }
-
+        bindDeviceToPreset(this.settings.presets, deviceId, targetPresetId);
+        inheritSimilarDevicePresets(this.settings.presets, this.settings.deviceMeta, this.settings.deviceAliases);
         await this.saveSettings();
         await this.applyFonts(); // apply the new preset font config immediately
     }
@@ -977,23 +962,16 @@ export default class LocalFontLoaderPlugin extends Plugin {
         if (!sourcePreset) return;
 
         // Deep-clone the source preset as the base of the new preset
-        const newPreset = {
-            ...JSON.parse(JSON.stringify(sourcePreset)), // deep copy
+        const newPreset: FontPreset = {
+            ...structuredClone(sourcePreset),
             id: this._generateUUID(),
             name: newPresetName, // use the passed-in name ("<original>_Copy")
             targetDevices: [this.currentDeviceId] // new preset contains only the current device
         };
 
-        // Only remove the current device from the source preset when it is a custom (non-global) preset
-        const isGlobalPreset = sourcePreset.id === 'default-preset' && sourcePreset.targetDevices.length === 0;
-        if (!isGlobalPreset) {
-            sourcePreset.targetDevices = sourcePreset.targetDevices.filter(
-                id => id !== this.currentDeviceId
-            );
-        }
-
         this.settings.presets.push(newPreset);
-        await this.saveSettings();
+        // 复制与手动分配共用入口；Copying must replace every previous binding and apply fonts.
+        await this.assignDeviceToPreset(this.currentDeviceId, newPreset.id);
     }
 
     /**
@@ -1122,7 +1100,7 @@ export default class LocalFontLoaderPlugin extends Plugin {
         // timestamps can establish.
         plan.ambiguous.forEach(group => {
             const names = group.ids.map(id => this._getDeviceName(id)).join(', ');
-            this._log(`[Local Font Loader] Same-model entries left alone (history: ${group.history}): ${names}`);
+            this._log(`[Local Font Loader] Similar devices kept separate (history: ${group.history}): ${names}`);
         });
 
         if (!plan.changed) {
@@ -1785,36 +1763,23 @@ export default class LocalFontLoaderPlugin extends Plugin {
      * Ensure the device preset exists
      */
     async _ensureDevicePreset() {
-        const deviceId = this.currentDeviceId;
-
-        // Check if any preset is bound to the current device
-        const devicePreset = this.settings.presets.find(p =>
-            p.targetDevices.includes(deviceId)
+        // 默认预设始终提供回退，不因显式绑定重复创建；Keep one default, including explicit bindings.
+        let changed = false;
+        if (!this.settings.presets.some(preset => preset.id === 'default-preset')) {
+            const base = this.settings.presets[0] || DEFAULT_SETTINGS.presets[0];
+            this.settings.presets.unshift({
+                ...structuredClone(base), id: 'default-preset', name: 'Default', targetDevices: [],
+            });
+            changed = true;
+        }
+        const inherited = inheritSimilarDevicePresets(
+            this.settings.presets, this.settings.deviceMeta, this.settings.deviceAliases,
         );
-
-        if (!devicePreset) {
-            // Use the default preset (global preset with empty targetDevices)
-            const defaultPreset = this.settings.presets.find(p => p.id === 'default-preset');
-            if (!defaultPreset || defaultPreset.targetDevices.length > 0) {
-                // If the default preset is missing or not global, create a global default preset
-                this._log('[Local Font Loader] Default preset missing or not global; recreating it');
-                // Carry over whatever the nearest existing preset had. These three fields live on a
-                // preset, not on settings — reading them from `settings` always yielded undefined,
-                // so recreating the default preset silently reset them.
-                const carryOver = this.settings.presets?.[0];
-
-                const newDefaultPreset: FontPreset = {
-                    id: 'default-preset',
-                    name: 'Default',
-                    targetDevices: [],
-                    fonts: carryOver?.fonts || DEFAULT_SETTINGS.presets[0].fonts,
-                    latinFontEnabled: carryOver?.latinFontEnabled ?? false,
-                    latinFontScope: carryOver?.latinFontScope ?? { letters: true, numbers: true, punctuation: true, symbols: true },
-                    headingApplyToFileTitle: carryOver?.headingApplyToFileTitle ?? false
-                };
-                this.settings.presets.unshift(newDefaultPreset);
-                await this._persistStartupState();
-            }
+        if (inherited > 0) {
+            this._log(`[Local Font Loader] Inherited presets for ${inherited} similar device(s)`);
+        }
+        if (changed || inherited > 0) {
+            await this._persistStartupState();
         }
     }
 
@@ -3696,6 +3661,7 @@ export default class LocalFontLoaderPlugin extends Plugin {
             // pass: the file it saves matches the settings it saved from.
             try {
                 await this.repairDeviceList();
+                await this._ensureDevicePreset();
             } catch (error) {
                 this._logError('[Local Font Loader] Device-list repair failed:', error);
             }

@@ -1152,10 +1152,16 @@ function resolveDeviceAlias(deviceId, aliases) {
     return deviceId;
   }
   let current = deviceId;
-  const seen = new Set([deviceId]);
-  while (aliases[current] && !seen.has(aliases[current])) {
+  const path = [];
+  const seen = new Map;
+  while (aliases[current]) {
+    const cycleStart = seen.get(current);
+    if (cycleStart !== undefined) {
+      return path.slice(cycleStart).sort()[0];
+    }
+    seen.set(current, path.length);
+    path.push(current);
     current = aliases[current];
-    seen.add(current);
   }
   return current;
 }
@@ -1210,22 +1216,6 @@ function findDuplicateDeviceGroups(meta, aliases = {}) {
   });
   return duplicates;
 }
-function pickCanonicalId(ids, nameMap, meta) {
-  const seenAt = (id) => {
-    const stamp = meta[id] && meta[id].lastSeen;
-    const time = stamp ? Date.parse(stamp) : Number.NaN;
-    return Number.isNaN(time) ? -1 : time;
-  };
-  const live = ids.filter((id) => seenAt(id) >= 0);
-  if (live.length > 0) {
-    const mostRecent = live.reduce((best, id) => seenAt(id) > seenAt(best) ? id : best);
-    if (live.length === 1 || live.some((id) => seenAt(id) !== seenAt(mostRecent))) {
-      return mostRecent;
-    }
-  }
-  const userNamed = ids.find((id) => nameMap[id] && !isGeneratedDeviceName(nameMap[id], meta[id]));
-  return userNamed || ids[0];
-}
 function pickName(canonicalId, ids, nameMap) {
   if (nameMap[canonicalId]) {
     return nameMap[canonicalId];
@@ -1262,19 +1252,25 @@ function planDeviceRepair(input) {
     }
   });
   const allGroups = findDuplicateDeviceGroups(meta, aliases);
-  const mergeable = allGroups.filter((group) => !group.key.includes("|model:"));
-  const ambiguous = allGroups.filter((group) => group.key.includes("|model:")).map((group) => ({ ...group, history: describeDeviceGroupHistory(group.ids, meta, input.now) }));
-  const merges = mergeable.map((group) => {
-    const canonicalId = pickCanonicalId(group.ids, nameMap, meta);
-    const removedIds = group.ids.filter((id) => id !== canonicalId);
+  const aliasGroups = new Map;
+  for (const [id, canonicalId] of Object.entries(aliases)) {
+    if (!(meta[id] || nameMap[id]) || !(meta[canonicalId] || nameMap[canonicalId]))
+      continue;
+    const ids = aliasGroups.get(canonicalId) || [canonicalId];
+    ids.push(id);
+    aliasGroups.set(canonicalId, ids);
+  }
+  const ambiguous = allGroups.map((group) => ({ ...group, history: describeDeviceGroupHistory(group.ids, meta, input.now) }));
+  const merges = Array.from(aliasGroups, ([canonicalId, ids]) => {
+    const removedIds = ids.filter((id) => id !== canonicalId);
     removedIds.forEach((id) => {
       aliases[id] = canonicalId;
     });
     return {
       canonicalId,
       removedIds,
-      name: pickName(canonicalId, group.ids, nameMap),
-      meta: pickMeta(canonicalId, group.ids, meta)
+      name: pickName(canonicalId, ids, nameMap),
+      meta: pickMeta(canonicalId, ids, meta)
     };
   });
   Object.keys(aliases).forEach((id) => {
@@ -1299,6 +1295,55 @@ function remapDeviceIds(deviceIds, aliases) {
     result.push(mapped);
   });
   return result;
+}
+
+// src/device-presets.ts
+function bindDeviceToPreset(presets, deviceId, presetId) {
+  const target = presets.find((preset) => preset.id === presetId);
+  if (!target || !deviceId.trim()) {
+    throw new Error("Cannot assign a device without a valid device and preset");
+  }
+  for (const preset of presets) {
+    preset.targetDevices = preset.targetDevices.filter((id) => id !== deviceId);
+  }
+  target.targetDevices.push(deviceId);
+}
+function inheritSimilarDevicePresets(presets, meta, aliases) {
+  const groups = new Map;
+  for (const [id, info] of Object.entries(meta)) {
+    if (aliases[id])
+      continue;
+    const key = deviceIdentityKey(info);
+    if (!key)
+      continue;
+    const ids = groups.get(key) || [];
+    ids.push(id);
+    groups.set(key, ids);
+  }
+  let inherited = 0;
+  for (const ids of groups.values()) {
+    const members = new Set(ids);
+    const assigned = presets.filter((preset) => preset.targetDevices.some((id) => members.has(id)));
+    if (assigned.length !== 1)
+      continue;
+    const target = assigned[0];
+    for (const id of ids) {
+      if (target.targetDevices.includes(id))
+        continue;
+      bindDeviceToPreset(presets, id, target.id);
+      inherited++;
+    }
+  }
+  return inherited;
+}
+function deviceLimitNotices(platform) {
+  if (!platform.isDesktopApp && platform.isMobileApp) {
+    if (platform.isIosApp)
+      return ["deviceLimitBodyIos"];
+    if (platform.isAndroidApp)
+      return ["deviceLimitBodyAndroid"];
+  }
+  return ["deviceLimitBodyAndroid", "deviceLimitBodyIos"];
 }
 
 // src/ui/settings-tab.ts
@@ -1550,18 +1595,24 @@ function renderDeviceAndPresetSection(tab, containerEl) {
   });
   const deviceManagementHeader = containerEl.createDiv({ cls: "setting-item-heading-with-button" });
   deviceManagementHeader.createEl("h4", { text: t("headerDeviceManagement") });
-  if (import_obsidian3.Platform.isMobile) {
+  {
     const calloutEl = containerEl.createDiv({ cls: "callout", attr: { "data-callout": "warning" } });
     const titleEl = calloutEl.createDiv({ cls: "callout-title" });
     import_obsidian3.setIcon(titleEl.createDiv({ cls: "callout-icon" }), "alert-triangle");
     titleEl.createDiv({ cls: "callout-title-inner", text: t("deviceLimitTitle") });
-    calloutEl.createDiv({ cls: "callout-content" }).createEl("p", { text: t(import_obsidian3.Platform.isIosApp ? "deviceLimitBodyIos" : "deviceLimitBodyAndroid") });
+    const contentEl = calloutEl.createDiv({ cls: "callout-content" });
+    for (const notice of deviceLimitNotices(import_obsidian3.Platform)) {
+      contentEl.createEl("p", { text: t(notice) });
+    }
   }
   const refreshBtn = deviceManagementHeader.createEl("button", { cls: "clickable-icon" });
   refreshBtn.setAttribute("aria-label", t("refreshDeviceList"));
   import_obsidian3.setIcon(refreshBtn, "refresh-cw");
   tab._addEventListener(refreshBtn, "click", async () => {
     await tab.plugin.loadSettings();
+    await tab.plugin.repairDeviceList();
+    await tab.plugin._ensureDevicePreset();
+    await tab.plugin.applyFonts();
     tab.update();
   });
   const dragContainer = containerEl.createDiv({ cls: "preset-drag-container" });
@@ -1569,7 +1620,7 @@ function renderDeviceAndPresetSection(tab, containerEl) {
     const presetSection = dragContainer.createDiv({ cls: "preset-section" });
     const presetHeader = presetSection.createDiv({ cls: "preset-header" });
     presetHeader.createEl("h5", {
-      text: preset.id === "default-preset" && preset.targetDevices.length === 0 ? `${preset.name} (${t("global")})` : preset.name
+      text: preset.id === "default-preset" ? `${preset.name} (${t("global")})` : preset.name
     });
     const presetActions = presetHeader.createDiv({ cls: "preset-actions" });
     const editBtn = presetActions.createEl("button", { cls: "clickable-icon" });
@@ -1611,7 +1662,7 @@ function renderDeviceAndPresetSection(tab, containerEl) {
       cls: "devices-container",
       attr: { "data-preset-id": preset.id }
     });
-    if (preset.id === "default-preset" && preset.targetDevices.length === 0) {
+    if (preset.id === "default-preset") {
       devicesContainer.addClass("global-preset-zone");
     }
     tab._addEventListener(devicesContainer, "dragover", (e) => {
@@ -1630,7 +1681,7 @@ function renderDeviceAndPresetSection(tab, containerEl) {
       tab.update();
     });
     let devicesToShow = [];
-    if (preset.id === "default-preset" && preset.targetDevices.length === 0) {
+    if (preset.id === "default-preset") {
       const allDeviceIds = new Set;
       if (tab.plugin.settings.deviceNameMap) {
         Object.keys(tab.plugin.settings.deviceNameMap).forEach((id) => {
@@ -1639,7 +1690,7 @@ function renderDeviceAndPresetSection(tab, containerEl) {
       }
       const assignedDevices = new Set;
       tab.plugin.settings.presets.forEach((p) => {
-        if (p.targetDevices.length > 0) {
+        if (p.id !== "default-preset") {
           p.targetDevices.forEach((id) => assignedDevices.add(id));
         }
       });
@@ -1741,40 +1792,25 @@ function renderDeviceAndPresetSection(tab, containerEl) {
             attr: { "aria-label": t("moveDeviceToPreset") }
           });
           import_obsidian3.setIcon(moveBtn, "move");
-          tab._addEventListener(moveBtn, "click", async (e) => {
+          tab._addEventListener(moveBtn, "click", (e) => {
             e.stopPropagation();
-            const selectEl = createEl("select");
-            selectEl.addClass("lfl-hidden-select");
-            tab.plugin.settings.presets.forEach((p) => {
-              const option = selectEl.appendChild(createEl("option"));
-              option.value = p.id;
-              option.text = p.id === "default-preset" && p.targetDevices.length === 0 ? `${p.name} (${t("global")})` : p.name;
-            });
             const currentPreset = tab.plugin.settings.presets.find((p) => p.targetDevices.includes(deviceId));
-            if (currentPreset) {
-              selectEl.value = currentPreset.id;
-            }
-            document.body.appendChild(selectEl);
-            selectEl.focus();
-            selectEl.click();
-            selectEl.addEventListener("change", async () => {
-              try {
-                const targetPresetId = selectEl.value;
-                await tab.plugin.assignDeviceToPreset(deviceId, targetPresetId);
-                new import_obsidian3.Notice(`✓ ${t("deviceReassigned")}`, 2000);
-                tab.update();
-              } catch (error) {
-                tab.plugin._logError("[Local Font Loader] Failed to reassign the device:", error);
-              } finally {
-                selectEl.remove();
-              }
+            const menu = new import_obsidian3.Menu;
+            tab.plugin.settings.presets.forEach((preset2) => {
+              menu.addItem((item) => item.setTitle(preset2.id === "default-preset" ? `${preset2.name} (${t("global")})` : preset2.name).setChecked(preset2.id === (currentPreset?.id || "default-preset")).onClick(() => {
+                tab.plugin.assignDeviceToPreset(deviceId, preset2.id).then(() => {
+                  new import_obsidian3.Notice(t("deviceReassigned"), 2000);
+                  tab.update();
+                }).catch((error) => {
+                  tab.plugin._logError("[Local Font Loader] Failed to reassign the device:", error);
+                });
+              }));
             });
-            selectEl.addEventListener("blur", () => {
-              selectEl.remove();
-            });
+            const rect = moveBtn.getBoundingClientRect();
+            menu.showAtPosition({ x: rect.left, y: rect.bottom }, moveBtn.ownerDocument);
           });
         }
-        deviceItem.draggable = true;
+        deviceItem.draggable = !import_obsidian3.Platform.isMobile;
         tab._addEventListener(deviceItem, "dragstart", (e) => {
           e.dataTransfer?.setData("text/plain", deviceId);
           deviceItem.classList.add("dragging");
@@ -1784,7 +1820,7 @@ function renderDeviceAndPresetSection(tab, containerEl) {
         });
       });
     }
-    if (preset.id === "default-preset" && preset.targetDevices.length === 0) {
+    if (preset.id === "default-preset") {
       const cleanupFooter = presetSection.createDiv({ cls: "device-cleanup-footer" });
       const cleanupBtn = cleanupFooter.createEl("button", {
         text: t("cleanupDevices"),
@@ -1809,7 +1845,7 @@ function renderDeviceAndPresetSection(tab, containerEl) {
   const devicePreset = tab.plugin._getDevicePreset();
   new import_obsidian3.Setting(containerEl).setName(t("currentDevicePreset")).setDesc(t("currentDevicePresetDesc")).addDropdown((dropdown) => {
     tab.plugin.settings.presets.forEach((preset) => {
-      const label = preset.id === "default-preset" && preset.targetDevices.length === 0 ? `${preset.name} (${t("global")})` : preset.name;
+      const label = preset.id === "default-preset" ? `${preset.name} (${t("global")})` : preset.name;
       dropdown.addOption(preset.id, label);
     });
     dropdown.setValue(devicePreset ? devicePreset.id : "default-preset");
@@ -1934,7 +1970,7 @@ function renderDirectoryAndApplicationSection(tab, containerEl) {
   }
   new import_obsidian6.Setting(containerEl).setName(t("selectPresetToEdit")).setDesc(t("selectPresetToEditDesc")).addDropdown((dropdown) => {
     tab.plugin.settings.presets.forEach((preset) => {
-      const label = preset.id === "default-preset" && preset.targetDevices.length === 0 ? `${preset.name} (${t("global")})` : preset.name;
+      const label = preset.id === "default-preset" ? `${preset.name} (${t("global")})` : preset.name;
       dropdown.addOption(preset.id, label);
     });
     dropdown.setValue(tab._activePresetId);
@@ -1961,7 +1997,7 @@ function renderDirectoryAndApplicationSection(tab, containerEl) {
       text: `${t("presetId")}: ${activePreset.id}`,
       cls: "lfl-preset-id"
     });
-    if (activePreset.id === "default-preset" && activePreset.targetDevices.length === 0) {
+    if (activePreset.id === "default-preset") {
       const warningContainer = presetInfoContent.createEl("p", { cls: "lfl-global-warning" });
       const warningIcon = warningContainer.createSpan({ cls: "lfl-warning-icon" });
       import_obsidian6.setIcon(warningIcon, "alert-triangle");
@@ -7376,16 +7412,8 @@ class LocalFontLoaderPlugin extends import_obsidian10.Plugin {
     await this.saveSettings();
   }
   async assignDeviceToPreset(deviceId, targetPresetId) {
-    this.settings.presets.forEach((preset) => {
-      preset.targetDevices = preset.targetDevices.filter((id) => id !== deviceId);
-    });
-    const targetPreset = this.settings.presets.find((p) => p.id === targetPresetId);
-    if (targetPreset) {
-      const isGlobalPreset = targetPreset.id === "default-preset" && targetPreset.targetDevices.length === 0;
-      if (!isGlobalPreset && !targetPreset.targetDevices.includes(deviceId)) {
-        targetPreset.targetDevices.push(deviceId);
-      }
-    }
+    bindDeviceToPreset(this.settings.presets, deviceId, targetPresetId);
+    inheritSimilarDevicePresets(this.settings.presets, this.settings.deviceMeta, this.settings.deviceAliases);
     await this.saveSettings();
     await this.applyFonts();
   }
@@ -7394,17 +7422,13 @@ class LocalFontLoaderPlugin extends import_obsidian10.Plugin {
     if (!sourcePreset)
       return;
     const newPreset = {
-      ...JSON.parse(JSON.stringify(sourcePreset)),
+      ...structuredClone(sourcePreset),
       id: this._generateUUID(),
       name: newPresetName,
       targetDevices: [this.currentDeviceId]
     };
-    const isGlobalPreset = sourcePreset.id === "default-preset" && sourcePreset.targetDevices.length === 0;
-    if (!isGlobalPreset) {
-      sourcePreset.targetDevices = sourcePreset.targetDevices.filter((id) => id !== this.currentDeviceId);
-    }
     this.settings.presets.push(newPreset);
-    await this.saveSettings();
+    await this.assignDeviceToPreset(this.currentDeviceId, newPreset.id);
   }
   _generateUUID() {
     return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function(c) {
@@ -7471,7 +7495,7 @@ class LocalFontLoaderPlugin extends import_obsidian10.Plugin {
     });
     plan.ambiguous.forEach((group) => {
       const names = group.ids.map((id) => this._getDeviceName(id)).join(", ");
-      this._log(`[Local Font Loader] Same-model entries left alone (history: ${group.history}): ${names}`);
+      this._log(`[Local Font Loader] Similar devices kept separate (history: ${group.history}): ${names}`);
     });
     if (!plan.changed) {
       return 0;
@@ -7824,25 +7848,23 @@ class LocalFontLoaderPlugin extends import_obsidian10.Plugin {
     return `${platform}-${fingerprint}`;
   }
   async _ensureDevicePreset() {
-    const deviceId = this.currentDeviceId;
-    const devicePreset = this.settings.presets.find((p) => p.targetDevices.includes(deviceId));
-    if (!devicePreset) {
-      const defaultPreset = this.settings.presets.find((p) => p.id === "default-preset");
-      if (!defaultPreset || defaultPreset.targetDevices.length > 0) {
-        this._log("[Local Font Loader] Default preset missing or not global; recreating it");
-        const carryOver = this.settings.presets?.[0];
-        const newDefaultPreset = {
-          id: "default-preset",
-          name: "Default",
-          targetDevices: [],
-          fonts: carryOver?.fonts || DEFAULT_SETTINGS.presets[0].fonts,
-          latinFontEnabled: carryOver?.latinFontEnabled ?? false,
-          latinFontScope: carryOver?.latinFontScope ?? { letters: true, numbers: true, punctuation: true, symbols: true },
-          headingApplyToFileTitle: carryOver?.headingApplyToFileTitle ?? false
-        };
-        this.settings.presets.unshift(newDefaultPreset);
-        await this._persistStartupState();
-      }
+    let changed = false;
+    if (!this.settings.presets.some((preset) => preset.id === "default-preset")) {
+      const base = this.settings.presets[0] || DEFAULT_SETTINGS.presets[0];
+      this.settings.presets.unshift({
+        ...structuredClone(base),
+        id: "default-preset",
+        name: "Default",
+        targetDevices: []
+      });
+      changed = true;
+    }
+    const inherited = inheritSimilarDevicePresets(this.settings.presets, this.settings.deviceMeta, this.settings.deviceAliases);
+    if (inherited > 0) {
+      this._log(`[Local Font Loader] Inherited presets for ${inherited} similar device(s)`);
+    }
+    if (changed || inherited > 0) {
+      await this._persistStartupState();
     }
   }
   async _ensureFolder(path) {
@@ -9069,6 +9091,7 @@ class LocalFontLoaderPlugin extends import_obsidian10.Plugin {
       this._log("[Local Font Loader] Settings reloaded from data.json");
       try {
         await this.repairDeviceList();
+        await this._ensureDevicePreset();
       } catch (error) {
         this._logError("[Local Font Loader] Device-list repair failed:", error);
       }

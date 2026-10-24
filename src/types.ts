@@ -89,7 +89,7 @@ export interface PresetFonts {
 export interface FontPreset {
     id: string;
     name: string;
-    /** Device ids this preset applies to. Empty means "every unassigned device". */
+    /** 显式设备绑定；Explicit bindings. Only default-preset also covers every unassigned device. */
     targetDevices: string[];
     fonts: PresetFonts;
     latinFontEnabled?: boolean;

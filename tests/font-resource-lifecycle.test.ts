@@ -2,13 +2,14 @@ import { afterEach, describe, expect, mock, test } from 'bun:test';
 import { mkdtemp, mkdir, readFile, writeFile, access, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DEFAULT_SETTINGS } from '../src/constants';
 
 class Stub {}
 const Platform = { isDesktopApp: true, isMobile: false };
 mock.module('obsidian', () => ({
     Plugin: Stub, PluginSettingTab: Stub, Modal: Stub, ConfirmationModal: Stub,
     AbstractInputSuggest: Stub, FuzzySuggestModal: Stub, Component: Stub,
-    Setting: Stub, Notice: Stub, App: Stub, TFolder: Stub, TextComponent: Stub,
+    Setting: Stub, Notice: Stub, Menu: Stub, App: Stub, TFolder: Stub, TextComponent: Stub,
     MarkdownRenderer: Stub, setIcon() {}, getLanguage: () => 'en',
     normalizePath: (path: string) => path.replace(/\\/g, '/'), Platform,
 }));
@@ -140,5 +141,57 @@ describe('session-local font resources', () => {
         plugin.app.vault.adapter.getResourcePath = () => { throw new Error('missing font'); };
         expect(plugin._getFontResourceSrc(font)).toBeNull();
         expect(errors.length).toBe(1);
+    });
+});
+
+// 复用空库夹具验证插件调用链，不触碰个人库；Exercise the plugin flow in the empty-vault fixture.
+describe('device preset plugin flow', () => {
+    test('copying another preset removes the current old binding, saves and applies the copied fonts', async () => {
+        const { plugin } = await fixture();
+        plugin.settings = structuredClone(DEFAULT_SETTINGS);
+        plugin.currentDeviceId = 'current';
+        const base = plugin.settings.presets[0];
+        base.fonts.text = 'Copied font';
+        plugin.settings.presets.push({ ...structuredClone(base), id: 'old', targetDevices: ['current'] });
+        const calls: string[] = [];
+        plugin.saveSettings = async () => { calls.push('save'); };
+        plugin.applyFonts = async () => { calls.push(plugin._getDevicePreset().fonts.text); };
+        await plugin.copyPresetForDevice(base.id, 'Copy');
+        expect(plugin.settings.presets.filter((p: { targetDevices: string[] }) => p.targetDevices.includes('current'))).toHaveLength(1);
+        expect(plugin._getDevicePreset().name).toBe('Copy');
+        expect(calls).toEqual(['save', 'Copied font']);
+    });
+
+    test('explicit default binding does not recreate the default and missing default uses an independent clone', async () => {
+        const { plugin } = await fixture();
+        plugin.settings = structuredClone(DEFAULT_SETTINGS);
+        plugin.currentDeviceId = 'fresh';
+        plugin.settings.presets[0].targetDevices = ['other'];
+        const snapshots: number[] = [];
+        plugin._persistStartupState = async () => { snapshots.push(1); };
+        await plugin._ensureDevicePreset();
+        expect(plugin.settings.presets).toHaveLength(1);
+        expect(snapshots).toEqual([]);
+        plugin.settings.presets[0].id = 'custom';
+        await plugin._ensureDevicePreset();
+        expect(plugin.settings.presets).toHaveLength(2);
+        expect(plugin.settings.presets[0].id).toBe('default-preset');
+        expect(plugin.settings.presets[0].fonts).not.toBe(plugin.settings.presets[1].fonts);
+        expect(snapshots).toEqual([1]);
+    });
+
+    test('startup inheritance sees the freshly registered model and preserves separate ids', async () => {
+        const { plugin } = await fixture();
+        plugin.settings = structuredClone(DEFAULT_SETTINGS);
+        plugin.currentDeviceId = 'fresh';
+        const info = { platform: 'mobile', os: 'android', model: 'PJZ110', hostname: '' };
+        plugin.settings.deviceMeta = { old: info, fresh: { ...info } };
+        plugin.settings.presets.push({ ...structuredClone(plugin.settings.presets[0]), id: 'reading', targetDevices: ['old'] });
+        let saved = false;
+        plugin._persistStartupState = async () => { saved = true; };
+        await plugin._ensureDevicePreset();
+        expect(plugin._getDevicePreset().id).toBe('reading');
+        expect(Object.keys(plugin.settings.deviceMeta)).toEqual(['old', 'fresh']);
+        expect(saved).toBe(true);
     });
 });

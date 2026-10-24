@@ -92,13 +92,26 @@ in the device list and to pick a translation:
 | What | Where it is read | Why |
 |------|------------------|-----|
 | The machine hostname (`os.hostname()`) | Desktop only | Names the entry this machine gets in the device list |
-| The platform's app-scoped device identifier (`ANDROID_ID` on Android, `identifierForVendor` on iOS) | Mobile only, through Capacitor | Gives each device a stable identity, so it is not listed twice after its local storage is cleared. The identifier is hashed before it is stored — the raw value is never written anywhere |
+| The platform's app-scoped device identifier (`ANDROID_ID` on Android, `identifierForVendor` on iOS) | Mobile only, when the Capacitor Device bridge is available | Helps retain identity across local storage changes. The identifier is hashed before storage; the raw value is never written anywhere. Without this bridge, the plugin uses a locally stored random ID |
 | The app language | Everywhere | Chooses which bundled translation to use |
 
 What is stored lives in `data.json` inside the plugin's own folder: the device display names, the
 recorded model/OS/hostname, when each device was first and last seen, and the hashed mobile
 identifier. That file is synced only by whatever you use to sync `.obsidian` — it is never sent to
 the plugin's author or to anyone else.
+
+### Device assignment limitations
+
+Mobile device identity can change after a factory reset, reinstall or local data loss. The settings
+show this limitation on desktop as well, because desktop users also manage mobile device entries.
+Identical models and hostnames do not prove that two entries belong to the same physical device.
+The plugin keeps those identities separate instead of automatically merging them.
+
+An unassigned device inherits a preset when devices with the same platform, OS and Android model
+(or hostname) have exactly one explicit preset assignment between them. Conflicting assignments
+are left unchanged. Generic iPhone/iPad families are not sufficient to match devices. Manual
+assignments, including a selection of the global preset, take priority over inheritance. A preset
+name such as “Mobile” does not create an assignment rule by itself.
 
 ### License
 

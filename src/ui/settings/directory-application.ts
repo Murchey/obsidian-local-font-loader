@@ -77,7 +77,7 @@ export function renderDirectoryAndApplicationSection(tab: FontManagerSettingTab,
             .addDropdown(dropdown => {
                 // Populate all presets as options
                 tab.plugin.settings.presets.forEach(preset => {
-                    const label = (preset.id === 'default-preset' && preset.targetDevices.length === 0)
+                    const label = preset.id === 'default-preset'
                         ? `${preset.name} (${t('global')})`
                         : preset.name;
                     dropdown.addOption(preset.id, label);
@@ -117,7 +117,7 @@ export function renderDirectoryAndApplicationSection(tab: FontManagerSettingTab,
             });
 
             // If it is the global preset, show a notice
-            if (activePreset.id === 'default-preset' && activePreset.targetDevices.length === 0) {
+            if (activePreset.id === 'default-preset') {
                 const warningContainer = presetInfoContent.createEl('p', { cls: 'lfl-global-warning' });
                 const warningIcon = warningContainer.createSpan({ cls: 'lfl-warning-icon' });
                 setIcon(warningIcon, 'alert-triangle');

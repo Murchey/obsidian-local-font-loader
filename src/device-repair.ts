@@ -7,10 +7,8 @@
  * than one id. The union then preserves every one of them, and each conflict adds another row to
  * the device list.
  *
- * This module decides which entries describe the same device and which one of them survives. It
- * is deliberately free of Obsidian APIs: the decision is pure data in, pure plan out, so it can
- * be reasoned about — and checked — without a running app, and the plugin class only applies the
- * plan it returns.
+ * 相似元数据不足以合并身份，仅恢复已记录别名；Similar metadata is not identity evidence.
+ * This pure module repairs previously recorded aliases; the plugin applies its plan.
  */
 
 import type { DeviceMeta } from './types';
@@ -167,9 +165,7 @@ export function describeDeviceGroupHistory(
 export interface DeviceRepairPlan {
     merges: DeviceMerge[];
     /**
-     * Same-model groups, each with the history that could not settle them. Never merged here — a
-     * model identifies no one device — so they are surfaced for a decision instead of being either
-     * merged blind or dropped silently.
+     * 同型号或同主机名均保留独立身份；Similar-model/hostname groups remain separate devices.
      */
     ambiguous: DeviceDuplicateGroup[];
     /** Replaced id → surviving id, chains already flattened. The complete map, not a delta. */
@@ -203,11 +199,17 @@ export function resolveDeviceAlias(deviceId: string, aliases: Record<string, str
     }
 
     let current = deviceId;
-    const seen = new Set<string>([deviceId]);
-
-    while (aliases[current] && !seen.has(aliases[current])) {
+    const path: string[] = [];
+    const seen = new Map<string, number>();
+    while (aliases[current]) {
+        const cycleStart = seen.get(current);
+        if (cycleStart !== undefined) {
+            // 同一环必须收敛到同一 ID，避免双向迁移；Resolve a cycle consistently from every entry point.
+            return path.slice(cycleStart).sort()[0];
+        }
+        seen.set(current, path.length);
+        path.push(current);
         current = aliases[current];
-        seen.add(current);
     }
 
     return current;
@@ -243,7 +245,7 @@ export function isGeneratedDeviceName(name: string | undefined, meta: DeviceMeta
 }
 
 /**
- * Derives the identity two entries must share to count as the same device.
+ * 生成相似设备分组键，不作为物理身份凭据；Derives a similarity key, not proof of identity.
  *
  * The key is built only from what a device reports about itself, never from its display name: the
  * name is user-editable, and the entry the user renamed is exactly the one that has to be matched
@@ -265,11 +267,8 @@ export function deviceIdentityKey(meta: DeviceMeta | undefined): string | null {
         return `${meta.platform}|${meta.os}|host:${hostname}`;
     }
 
-    // Apple's user agent exposes the device *family* — every iPhone model reports "iPhone", every
-    // iPad "iPad" — so on those platforms the model identifies nothing and two distinct devices
-    // would be merged. Android's user agent carries a real build code ("SM-X710", "PJZ110"),
-    // which is specific enough to match on. A device whose metadata yields no usable key is left
-    // alone: a missed repair costs a stale row, a wrong one costs a device its presets.
+    // 苹果 UA 仅提供设备家族，不能据此继承预设；Apple's generic family is insufficient for matching.
+    // Android build codes can group similar devices, but never justify merging their identities.
     const model = String(meta.model || '').trim().toLowerCase();
     if (!model || meta.os === 'ios' || meta.os === 'ipados') {
         return null;
@@ -320,47 +319,6 @@ export function findDuplicateDeviceGroups(
     });
 
     return duplicates;
-}
-
-/**
- * Chooses which id in a group survives.
- *
- * Order of preference, each step of which every device can compute from the same synced data — so
- * they all reach the same answer and the repair converges instead of ping-ponging between devices:
- *
- * 1. the id that was most recently seen, because that is the entry the device actually running
- *    holds. Merging onto a quiet id instead would make the live device adopt an identity nothing
- *    has seen lately, for no gain.
- * 2. the id the user renamed, since that is the row they recognise.
- * 3. the lowest id, so ties are still deterministic.
- *
- * @param ids - The group's ids, ascending
- * @param nameMap - The device display-name map
- * @param meta - The device metadata map
- * @returns The surviving id
- */
-function pickCanonicalId(
-    ids: string[],
-    nameMap: Record<string, string>,
-    meta: Record<string, DeviceMeta>
-): string {
-    const seenAt = (id: string): number => {
-        const stamp = meta[id] && meta[id].lastSeen;
-        const time = stamp ? Date.parse(stamp) : Number.NaN;
-        return Number.isNaN(time) ? -1 : time;
-    };
-
-    const live = ids.filter(id => seenAt(id) >= 0);
-    if (live.length > 0) {
-        const mostRecent = live.reduce((best, id) => (seenAt(id) > seenAt(best) ? id : best));
-        // Only decisive when one entry is strictly newer; equal timestamps fall through.
-        if (live.length === 1 || live.some(id => seenAt(id) !== seenAt(mostRecent))) {
-            return mostRecent;
-        }
-    }
-
-    const userNamed = ids.find(id => nameMap[id] && !isGeneratedDeviceName(nameMap[id], meta[id]));
-    return userNamed || ids[0];
 }
 
 /**
@@ -441,19 +399,21 @@ export function planDeviceRepair(input: DeviceRepairInput): DeviceRepairPlan {
         }
     });
 
-    // A hostname-keyed group names a machine, and the platform and OS in the key already keep a
-    // dual-boot machine as two devices, so those merge on the identity alone. A model-keyed group
-    // identifies no one particular device, and — as `describeDeviceGroupHistory` explains — the
-    // timestamps cannot settle it either, so it is never merged here. It is reported instead.
+    // 主机名和型号都只是相似线索，不能证明物理身份；Neither hostname nor model proves identity.
+    // 只恢复已经明确记载的别名关系；Only previously recorded aliases can collapse resurrected rows.
     const allGroups = findDuplicateDeviceGroups(meta, aliases);
-    const mergeable = allGroups.filter(group => !group.key.includes('|model:'));
+    const aliasGroups = new Map<string, string[]>();
+    for (const [id, canonicalId] of Object.entries(aliases)) {
+        if (!(meta[id] || nameMap[id]) || !(meta[canonicalId] || nameMap[canonicalId])) continue;
+        const ids = aliasGroups.get(canonicalId) || [canonicalId];
+        ids.push(id);
+        aliasGroups.set(canonicalId, ids);
+    }
     const ambiguous = allGroups
-        .filter(group => group.key.includes('|model:'))
         .map(group => ({ ...group, history: describeDeviceGroupHistory(group.ids, meta, input.now) }));
 
-    const merges = mergeable.map(group => {
-        const canonicalId = pickCanonicalId(group.ids, nameMap, meta);
-        const removedIds = group.ids.filter(id => id !== canonicalId);
+    const merges = Array.from(aliasGroups, ([canonicalId, ids]) => {
+        const removedIds = ids.filter(id => id !== canonicalId);
 
         removedIds.forEach(id => {
             aliases[id] = canonicalId;
@@ -462,8 +422,8 @@ export function planDeviceRepair(input: DeviceRepairInput): DeviceRepairPlan {
         return {
             canonicalId,
             removedIds,
-            name: pickName(canonicalId, group.ids, nameMap),
-            meta: pickMeta(canonicalId, group.ids, meta),
+            name: pickName(canonicalId, ids, nameMap),
+            meta: pickMeta(canonicalId, ids, meta),
         };
     });
 

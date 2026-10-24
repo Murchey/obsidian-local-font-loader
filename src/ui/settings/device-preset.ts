@@ -5,9 +5,10 @@
  * each part can be read, reviewed and changed on its own.
  */
 
-import { Notice, Platform, Setting, setIcon } from 'obsidian';
+import { Menu, Notice, Platform, Setting, setIcon } from 'obsidian';
 
 import { t } from '../../i18n';
+import { deviceLimitNotices } from '../../device-presets';
 import { TextInputModal, showConfirmDialog } from '../modals';
 import type FontManagerSettingTab from '../settings-tab';
 
@@ -69,19 +70,16 @@ export function renderDeviceAndPresetSection(tab: FontManagerSettingTab, contain
         const deviceManagementHeader = containerEl.createDiv({ cls: 'setting-item-heading-with-button' });
         deviceManagementHeader.createEl('h4', { text: t('headerDeviceManagement') });
 
-        // Mobile only: desktop devices are told apart by hostname, so the limitation below cannot
-        // arise there, and showing it everywhere would only raise a doubt that does not apply.
-        // The wording is per platform because the trigger differs — Android loses its identity to
-        // a factory reset, iOS loses it when the app is uninstalled, since both identifiers are
-        // app-scoped rather than hardware ones.
-        // Built from Obsidian's own callout classes so it inherits the app's styling.
-        if (Platform.isMobile) {
+        // 桌面也展示移动端局限，沿用原生样式；Show mobile limitations to desktop managers as well.
+        {
             const calloutEl = containerEl.createDiv({ cls: 'callout', attr: { 'data-callout': 'warning' } });
             const titleEl = calloutEl.createDiv({ cls: 'callout-title' });
             setIcon(titleEl.createDiv({ cls: 'callout-icon' }), 'alert-triangle');
             titleEl.createDiv({ cls: 'callout-title-inner', text: t('deviceLimitTitle') });
-            calloutEl.createDiv({ cls: 'callout-content' })
-                .createEl('p', { text: t(Platform.isIosApp ? 'deviceLimitBodyIos' : 'deviceLimitBodyAndroid') });
+            const contentEl = calloutEl.createDiv({ cls: 'callout-content' });
+            for (const notice of deviceLimitNotices(Platform)) {
+                contentEl.createEl('p', { text: t(notice) });
+            }
         }
 
         const refreshBtn = deviceManagementHeader.createEl('button', { cls: 'clickable-icon' });
@@ -90,6 +88,9 @@ export function renderDeviceAndPresetSection(tab: FontManagerSettingTab, contain
         tab._addEventListener(refreshBtn, 'click', async () => {
             // Reload settings (read from the file)
             await tab.plugin.loadSettings();
+            await tab.plugin.repairDeviceList();
+            await tab.plugin._ensureDevicePreset();
+            await tab.plugin.applyFonts();
             // Re-render the entire settings page
             tab.update();
         });
@@ -101,7 +102,7 @@ export function renderDeviceAndPresetSection(tab: FontManagerSettingTab, contain
 
             const presetHeader = presetSection.createDiv({ cls: 'preset-header' });
             presetHeader.createEl('h5', {
-                text: (preset.id === 'default-preset' && preset.targetDevices.length === 0)
+                text: preset.id === 'default-preset'
                     ? `${preset.name} (${t('global')})`
                     : preset.name
             });
@@ -165,7 +166,7 @@ export function renderDeviceAndPresetSection(tab: FontManagerSettingTab, contain
                 attr: { 'data-preset-id': preset.id }
             });
 
-            if (preset.id === 'default-preset' && preset.targetDevices.length === 0) {
+            if (preset.id === 'default-preset') {
                 devicesContainer.addClass('global-preset-zone');
             }
 
@@ -191,7 +192,7 @@ export function renderDeviceAndPresetSection(tab: FontManagerSettingTab, contain
 
             // Get the device list to display
             let devicesToShow: string[] = [];
-            if (preset.id === 'default-preset' && preset.targetDevices.length === 0) {
+            if (preset.id === 'default-preset') {
                 // Default global preset: show all unassigned devices
                 const allDeviceIds = new Set<string>();
 
@@ -205,7 +206,7 @@ export function renderDeviceAndPresetSection(tab: FontManagerSettingTab, contain
                 // Find unassigned devices (not in any custom preset's targetDevices)
                 const assignedDevices = new Set<string>();
                 tab.plugin.settings.presets.forEach(p => {
-                    if (p.targetDevices.length > 0) {
+                    if (p.id !== 'default-preset') {
                         p.targetDevices.forEach(id => assignedDevices.add(id));
                     }
                 });
@@ -360,51 +361,33 @@ export function renderDeviceAndPresetSection(tab: FontManagerSettingTab, contain
                             attr: { 'aria-label': t('moveDeviceToPreset') }
                         });
                         setIcon(moveBtn, 'move');
-                        tab._addEventListener(moveBtn, 'click', async (e) => {
+                        tab._addEventListener(moveBtn, 'click', (e: MouseEvent) => {
                             e.stopPropagation();
-
-                            const selectEl = createEl('select');
-                            selectEl.addClass('lfl-hidden-select');
-
-                            tab.plugin.settings.presets.forEach(p => {
-                                const option = selectEl.appendChild(createEl('option'));
-                                option.value = p.id;
-                                option.text = (p.id === 'default-preset' && p.targetDevices.length === 0)
-                                    ? `${p.name} (${t('global')})`
-                                    : p.name;
-                            });
-
                             const currentPreset = tab.plugin.settings.presets.find(p =>
                                 p.targetDevices.includes(deviceId)
                             );
-                            if (currentPreset) {
-                                selectEl.value = currentPreset.id;
-                            }
-
-                            document.body.appendChild(selectEl);
-                            selectEl.focus();
-                            selectEl.click();
-
-                            selectEl.addEventListener('change', async () => {
-                                try {
-                                    const targetPresetId = selectEl.value;
-                                    await tab.plugin.assignDeviceToPreset(deviceId, targetPresetId);
-                                    new Notice(`✓ ${t('deviceReassigned')}`, 2000);
-                                    tab.update();
-                                } catch (error) {
-                                    tab.plugin._logError('[Local Font Loader] Failed to reassign the device:', error);
-                                } finally {
-                                    selectEl.remove();
-                                }
+                            // 使用原生菜单，不依赖隐藏选择框或失焦时序；Use the native menu lifecycle.
+                            const menu = new Menu();
+                            tab.plugin.settings.presets.forEach(preset => {
+                                menu.addItem(item => item
+                                    .setTitle(preset.id === 'default-preset' ? `${preset.name} (${t('global')})` : preset.name)
+                                    .setChecked(preset.id === (currentPreset?.id || 'default-preset'))
+                                    .onClick(() => {
+                                        void tab.plugin.assignDeviceToPreset(deviceId, preset.id).then(() => {
+                                            new Notice(t('deviceReassigned'), 2000);
+                                            tab.update();
+                                        }).catch(error => {
+                                            tab.plugin._logError('[Local Font Loader] Failed to reassign the device:', error);
+                                        });
+                                    }));
                             });
-
-                            selectEl.addEventListener('blur', () => {
-                                selectEl.remove();
-                            });
+                            const rect = moveBtn.getBoundingClientRect();
+                            menu.showAtPosition({ x: rect.left, y: rect.bottom }, moveBtn.ownerDocument);
                         });
                     }
 
-                    deviceItem.draggable = true;
+                    // 移动端使用菜单分配，避免长按拖拽干扰滚动；Keep touch scrolling free of card dragging.
+                    deviceItem.draggable = !Platform.isMobile;
                     tab._addEventListener(deviceItem, 'dragstart', (e: DragEvent) => {
                         e.dataTransfer?.setData('text/plain', deviceId);
                         deviceItem.classList.add('dragging');
@@ -419,7 +402,7 @@ export function renderDeviceAndPresetSection(tab: FontManagerSettingTab, contain
             // Global zone footer: an explicit, confirmed cleanup for stale device entries.
             // Shown only where duplicates actually surface, and it lists exactly which devices
             // would go, so nothing is removed silently.
-            if (preset.id === 'default-preset' && preset.targetDevices.length === 0) {
+            if (preset.id === 'default-preset') {
                 const cleanupFooter = presetSection.createDiv({ cls: 'device-cleanup-footer' });
 
                 const cleanupBtn = cleanupFooter.createEl('button', {
@@ -464,7 +447,7 @@ export function renderDeviceAndPresetSection(tab: FontManagerSettingTab, contain
             .setDesc(t('currentDevicePresetDesc'))
             .addDropdown(dropdown => {
                 tab.plugin.settings.presets.forEach(preset => {
-                    const label = (preset.id === 'default-preset' && preset.targetDevices.length === 0)
+                    const label = preset.id === 'default-preset'
                         ? `${preset.name} (${t('global')})`
                         : preset.name;
                     dropdown.addOption(preset.id, label);

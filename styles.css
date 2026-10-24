@@ -601,14 +601,6 @@
     display: none;
 }
 
-/* Kept in the layout but invisible: a `display: none` select cannot be focused or clicked, and
-   clicking it is what opens the native picker on mobile. */
-.lfl-hidden-select {
-    position: absolute;
-    opacity: 0;
-    pointer-events: none;
-}
-
 /* ============================================================================
    Misc
    ============================================================================ */
