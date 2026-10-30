@@ -17,6 +17,7 @@
 - **⚡ Direct Loading**: The generated CSS points straight at your font files — nothing is embedded, nothing is duplicated, and the browser fetches only the weights a note actually renders
 - **🌍 Latin Font Separation**: Use different fonts for Latin and CJK characters with fine-grained unicode-range control
 - **🔄 Font Family Support**: Automatically detects and groups Regular, Italic, Bold, and Bold Italic variants
+- **🔠 Independent Text Sizes**: Set the editor, reading view and interface font sizes separately — type the px value directly or drag the slider
 - **⚙️ Full-Featured Settings**: Intuitive UI for scanning, previewing and applying fonts
 - **🚀 Auto-load on Startup**: Optionally apply your font configuration when Obsidian launches
 
@@ -75,6 +76,7 @@
 | **Auto-load on Startup** | Automatically apply fonts when Obsidian starts |
 | **Latin Font Separation** | Use separate fonts for Latin vs CJK characters |
 | **Latin Font Scope** | Fine-tune which character ranges use the Latin font |
+| **Font Sizes** | Independent editor / reading view / interface text size, entered in px |
 
 ### Requirements
 
@@ -178,6 +180,7 @@ release with the changelog section as its body.
 - **⚡ 直接加载**: 生成的 CSS 直接指向字体文件，不内嵌、不复制，浏览器只拉取笔记真正用到的字重
 - **🌍 拉丁字体分离**: 为拉丁字符和 CJK 字符使用不同字体，支持精细的 unicode-range 控制
 - **🔄 字体家族支持**: 自动检测并分组 Regular、Italic、Bold 和 Bold Italic 变体
+- **🔠 独立字号调节**: 编辑器、阅读视图与界面字号可分别设置，直接输入像素值或拖滑块
 - **⚙️ 完整设置界面**: 直观的字体扫描与应用界面
 - **🚀 启动时自动加载**: 可选在 Obsidian 启动时自动应用字体配置
 
@@ -236,6 +239,7 @@ release with the changelog section as its body.
 | **启动时自动加载** | Obsidian 启动时自动应用字体 |
 | **拉丁字体分离** | 为拉丁字符和 CJK 字符使用不同字体 |
 | **拉丁字体作用范围** | 精细调整哪些字符范围使用拉丁字体 |
+| **字号设置** | 编辑器、阅读视图与界面字号分别独立调节，可直接输入像素值 |
 
 ### 系统要求
 
@@ -273,6 +277,7 @@ release with the changelog section as its body.
 - **⚡ 直接載入**: 產生的 CSS 直接指向字型檔案，不內嵌、不複製，瀏覽器只載入筆記真正用到的字重
 - **🌍 拉丁字型分離**: 為拉丁字元和 CJK 字元使用不同字型，支援精細的 unicode-range 控制
 - **🔄 字型家族支援**: 自動偵測並分組 Regular、Italic、Bold 和 Bold Italic 變體
+- **🔠 獨立字級調節**: 編輯器、閱讀視圖與介面字級可分開設定，直接輸入像素值或拖曳滑桿
 - **⚙️ 完整設定介面**: 直覺的字型掃描與套用介面
 - **🚀 啟動時自動載入**: 可選擇在 Obsidian 啟動時自動套用字型設定
 
@@ -331,6 +336,7 @@ release with the changelog section as its body.
 | **啟動時自動載入** | Obsidian 啟動時自動套用字型 |
 | **拉丁字型分離** | 為拉丁字元和 CJK 字元使用不同字型 |
 | **拉丁字型作用範圍** | 精細調整哪些字元範圍使用拉丁字型 |
+| **字級設定** | 編輯器、閱讀視圖與介面字級分別獨立調節，直接輸入像素值 |
 
 ### 系統需求
 

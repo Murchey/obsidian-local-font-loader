@@ -10,6 +10,7 @@ import type LocalFontLoaderPlugin from '../plugin';
 import type { FontInfo, FontPreset, LatinFontScope } from '../types';
 import { renderDeviceAndPresetSection } from './settings/device-preset';
 import { renderDirectoryAndApplicationSection } from './settings/directory-application';
+import { renderFontSizeSection } from './settings/font-size';
 import { renderFontStatusSection } from './settings/font-status';
 import { renderFallbackSection } from './settings/fallback';
 import { setFontFamilyExpanded, isFontFamilyExpanded } from './font-family-view';
@@ -227,6 +228,7 @@ export default class FontManagerSettingTab extends PluginSettingTab {
         // Each section owns its own module; display() only decides the order.
         renderDeviceAndPresetSection(this, containerEl);
         renderDirectoryAndApplicationSection(this, containerEl);
+        renderFontSizeSection(this, containerEl);
         renderFontStatusSection(this, containerEl);
         renderFallbackSection(this, containerEl);
 

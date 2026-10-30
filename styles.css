@@ -744,3 +744,77 @@
     margin-top: var(--size-4-4);
     text-align: right;
 }
+
+/* ============================================================================
+   Font size section — editor / reading view / interface, set independently
+   ============================================================================ */
+
+/* The number field has to look like a size, not like a search box: narrow, right-aligned, and
+   with the unit implied by the label beside it. */
+.lfl-size-input {
+    width: 4.5em;
+    min-width: 4.5em;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+/* The slider next to it is where coarse changes happen; it should not dwarf the field. */
+.lfl-size-input + .slider {
+    flex: 0 1 8em;
+}
+
+.lfl-size-preview {
+    margin: 12px 0 20px 0;
+    padding: 12px 16px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: var(--radius-m);
+    background: var(--background-secondary);
+}
+
+.lfl-size-preview-title {
+    margin-bottom: var(--size-4-2);
+    font-size: var(--font-ui-smaller);
+    font-weight: var(--font-semibold);
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.lfl-size-preview-line {
+    display: flex;
+    align-items: baseline;
+    gap: var(--size-4-3);
+    padding: 2px 0;
+    color: var(--text-normal);
+    line-height: 1.5;
+    overflow: hidden;
+}
+
+/* A disabled surface shows its sample at the theme's own size, dimmed: it is the "off" state,
+   not a preview of a size that is not in effect. */
+.lfl-size-preview-line.is-disabled {
+    opacity: 0.45;
+}
+
+.lfl-size-preview-label {
+    flex: 0 0 7em;
+    font-size: var(--font-ui-smaller);
+    color: var(--text-muted);
+}
+
+.lfl-size-preview-sample {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+@media (max-width: 768px) {
+    .lfl-size-preview-label {
+        flex-basis: 5em;
+    }
+
+    .lfl-size-input {
+        width: 3.8em;
+        min-width: 3.8em;
+    }
+}

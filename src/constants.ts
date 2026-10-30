@@ -1,6 +1,7 @@
 /**
  * Default plugin settings.
  */
+import { FONT_SIZE_DEFAULTS } from './font-size';
 import type { PluginSettings } from './types';
 
 export const DEFAULT_SETTINGS: PluginSettings = {
@@ -21,6 +22,14 @@ export const DEFAULT_SETTINGS: PluginSettings = {
 
     // Global settings
     latinFontForUI: false,    // Apply Latin font to UI elements (global)
+
+    // Editor / reading view / interface text sizes (global; independent of the font presets).
+    // All three start disabled: Obsidian's own sizes apply until the user sets one.
+    fontSizes: {
+        editor: { ...FONT_SIZE_DEFAULTS.editor },
+        reading: { ...FONT_SIZE_DEFAULTS.reading },
+        ui: { ...FONT_SIZE_DEFAULTS.ui }
+    },
 
     // Preset system
     presets: [                // Preset array

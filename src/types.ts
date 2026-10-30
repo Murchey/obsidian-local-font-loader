@@ -66,6 +66,25 @@ export interface LatinFontScope {
     symbols: boolean;
 }
 
+/**
+ * The surfaces whose text size can be set independently.
+ *
+ * `editor` is the source / live-preview editor, `reading` the reading view and its note
+ * previews, `ui` the application chrome. They are separate keys because they are separate
+ * containers in the DOM — see `buildFontSizeCss`.
+ */
+export type FontSizeKey = 'editor' | 'reading' | 'ui';
+
+/** One surface's text size, in pixels, and whether it overrides Obsidian's own. */
+export interface FontSizeSetting {
+    enabled: boolean;
+    /** Integer pixels; clamped to the surface's bounds on read and on write. */
+    value: number;
+}
+
+/** All three surfaces' sizes. */
+export type FontSizeSettings = Record<FontSizeKey, FontSizeSetting>;
+
 /** The top-level font fields versions before presets wrote, read once while migrating them. */
 export interface LegacyFontSettings {
     fonts?: PresetFonts;
@@ -143,6 +162,13 @@ export interface PluginSettings {
      */
     deviceAliases: Record<string, string>;
     latinFontForUI: boolean;
+    /**
+     * Editor / reading view / interface text sizes.
+     *
+     * Global rather than per preset: the size a person reads at is a property of the screen and
+     * their eyes, not of the fonts a preset happens to assign.
+     */
+    fontSizes: FontSizeSettings;
     presets: FontPreset[];
 }
 

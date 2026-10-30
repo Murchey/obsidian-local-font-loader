@@ -7,6 +7,7 @@ import type { MathJaxFontData } from './obsidian-extras';
 import { t } from './i18n';
 import { parseFontMetadata } from './font-metadata';
 import { DEFAULT_SETTINGS } from './constants';
+import { buildFontSizeCss, normalizeFontSizeSettings, FONT_SIZES_CSS_ID } from './font-size';
 import { bindDeviceToPreset, inheritSimilarDevicePresets } from './device-presets';
 import {
     planDeviceRepair,
@@ -191,6 +192,10 @@ export default class LocalFontLoaderPlugin extends Plugin {
 
     // saveSettings debounce optimization
     _saveSettingsTimer: number | null = null;
+
+    /** Debounce handle for the size layer, which is rebuilt on every keystroke in its fields. */
+    _fontSizeApplyTimer: number | null = null;
+
     _debouncedSaveSettings() {
         if (this._saveSettingsTimer) {
             window.clearTimeout(this._saveSettingsTimer);
@@ -661,6 +666,9 @@ export default class LocalFontLoaderPlugin extends Plugin {
             this._logError('[Local Font Loader] Font existence check failed:', error);
         }
 
+        // Text sizes are a setting of their own: applied whatever the font auto-load switch says.
+        this.applyFontSizes();
+
         // Auto-load fonts on startup
         if (this.settings.autoLoadOnStartup) {
             this._log('[Local Font Loader] Auto-loading fonts...');
@@ -692,6 +700,12 @@ export default class LocalFontLoaderPlugin extends Plugin {
         if (this._dataReloadTimer) {
             window.clearTimeout(this._dataReloadTimer);
             this._dataReloadTimer = null;
+        }
+
+        // Clean up the pending size write
+        if (this._fontSizeApplyTimer) {
+            window.clearTimeout(this._fontSizeApplyTimer);
+            this._fontSizeApplyTimer = null;
         }
 
         this.removeFontStyles();
@@ -802,6 +816,10 @@ export default class LocalFontLoaderPlugin extends Plugin {
 
         // Deep-clone the default base so settings.presets never shares nested references with the module constant when data is null
         this.settings = Object.assign({}, JSON.parse(JSON.stringify(DEFAULT_SETTINGS)), data);
+
+        // A file written before sizes existed, or a sync merge that dropped one surface, must
+        // still yield three in-range entries: the CSS builder reads all three unconditionally.
+        this.settings.fontSizes = normalizeFontSizeSettings(this.settings.fontSizes);
     }
 
     async saveSettings() {
@@ -2837,6 +2855,34 @@ export default class LocalFontLoaderPlugin extends Plugin {
     }
 
 
+    /**
+     * Applies the editor / reading view / interface text sizes.
+     *
+     * Written under its own stylesheet id, so it is independent of the font layer: a vault with
+     * no font configured still gets its sizes, and "Apply fonts" never takes them away.
+     */
+    applyFontSizes(): void {
+        try {
+            const css = buildFontSizeCss(this.settings.fontSizes);
+            this.applyCss(css ? `/* Local Font Loader - Font Sizes */\n\n${css}` : '', FONT_SIZES_CSS_ID);
+        } catch (error) {
+            this._logError('[Local Font Loader] Failed to apply font sizes:', error);
+        }
+    }
+
+    /**
+     * Coalesces repeated size changes — a slider drag or a run of keystrokes — into one write.
+     */
+    _debouncedApplyFontSizes(): void {
+        if (this._fontSizeApplyTimer) {
+            window.clearTimeout(this._fontSizeApplyTimer);
+        }
+        this._fontSizeApplyTimer = window.setTimeout(() => {
+            this._fontSizeApplyTimer = null;
+            this.applyFontSizes();
+        }, 120);
+    }
+
     // Apply fonts config (load from cache only)
     async applyFonts() {
         const startTime = performance.now();
@@ -2889,7 +2935,11 @@ export default class LocalFontLoaderPlugin extends Plugin {
 
             if (usedFonts.size === 0) {
                 this._log('[Local Font Loader] No fonts configured');
-                this.removeFontStyles();
+                // Only the font layers: the size layer belongs to its own setting and stays.
+                this._removeGeneratedStyles(FONT_FACES_ID);
+                this._removeGeneratedStyles(FONT_GLYPHS_ID);
+                this._removeGeneratedStyles('local-font-loader-vars');
+                this._restoreMathFontMetrics();
                 return;
             }
 
@@ -3609,6 +3659,7 @@ export default class LocalFontLoaderPlugin extends Plugin {
         this._removeGeneratedStyles(FONT_FACES_ID);
         this._removeGeneratedStyles(FONT_GLYPHS_ID);
         this._removeGeneratedStyles('local-font-loader-vars');
+        this._removeGeneratedStyles(FONT_SIZES_CSS_ID);
 
         // Hand MathJax its own metrics back. They live on a global object shared with every other
         // renderer, so leaving them adopted after the plugin stops managing the font would keep
@@ -3676,6 +3727,9 @@ export default class LocalFontLoaderPlugin extends Plugin {
                     this._logError('[Local Font Loader] Failed to re-apply fonts:', error);
                 }
             }
+
+            // Sizes may have changed on another device too; this does not depend on auto-load.
+            this.applyFontSizes();
 
             // Notify the settings panel to refresh
             this.app.workspace.trigger('local-font-loader:settings-changed');

@@ -1,8 +1,8 @@
 {
 	"name": "obsidian-local-font-loader",
-	"version": "1.7.2",
+	"version": "1.8.0",
 	"private": true,
-	"description": "Load local fonts (TTF/OTF/WOFF/WOFF2) straight from your vault. Manage UI, text, code, and math fonts separately. Support cross-device font presets.",
+	"description": "Load local fonts (TTF/OTF/WOFF/WOFF2) straight from your vault. Manage UI, text, code, and math fonts separately, plus independent editor / reading view / interface font sizes. Support cross-device font presets.",
 	"author": "CoreVortex",
 	"license": "MIT",
 	"repository": {
