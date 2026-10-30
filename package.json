@@ -10,8 +10,8 @@
 		"url": "https://github.com/lmce72/obsidian-local-font-loader.git"
 	},
 	"scripts": {
-		"build": "bun build src/main.ts --outfile=main.js --target=node --format=cjs --external obsidian",
-		"dev": "bun build src/main.ts --outfile=main.js --target=node --format=cjs --external obsidian --watch",
+		"build": "esbuild src/main.ts --bundle --outfile=main.js --target=es2022 --format=cjs --external:obsidian",
+		"dev": "esbuild src/main.ts --bundle --outfile=main.js --target=es2022 --format=cjs --external:obsidian --watch",
 		"typecheck": "tsc --noEmit",
 		"test": "bun test",
 		"sync-version": "bun run scripts/sync-version.mjs",
@@ -19,6 +19,7 @@
 	},
 	"devDependencies": {
 		"@types/node": "24.12.2",
+		"esbuild": "^0.28.2",
 		"obsidian": "1.13.1",
 		"typescript": "7.0.2"
 	}

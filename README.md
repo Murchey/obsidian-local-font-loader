@@ -133,14 +133,14 @@ If you encounter any issues or have feature requests, please [open an issue on G
 
 ### Development
 
-The plugin is built with [Bun](https://bun.sh). `main.js` at the repository root is a **build
+The plugin can be built with npm using esbuild. `main.js` at the repository root is a **build
 artifact** — edit the modules under `src/` and rebuild, never the bundle itself.
 
 ```bash
-bun run build          # bundle src/ into main.js
-bun run dev            # rebuild on change
-bun run typecheck      # tsc --noEmit over src/
-bun run sync-version   # copy the version from package.json into manifest.json
+npm install
+npm run build          # bundle src/ into main.js
+npm run dev            # rebuild on change
+npm run typecheck      # tsc --noEmit over src/
 ```
 
 | Path | Contents |
@@ -159,7 +159,7 @@ bun run sync-version   # copy the version from package.json into manifest.json
 | `src/constants.ts` | default settings |
 | `src/font-metadata.ts` | OpenType / TrueType name-table reader |
 
-The sources are TypeScript; Bun strips the types when bundling, so nothing is emitted for them at runtime. `obsidian` is kept external.
+The sources are TypeScript; esbuild strips the types when bundling, so nothing is emitted for them at runtime. `obsidian` is kept external.
 
 **Releasing:** add a `CHANGELOG.md` section for the version, set it in `package.json`, run
 `bun run sync-version`, then push a tag. CI builds `main.js` from `src/` and publishes the
